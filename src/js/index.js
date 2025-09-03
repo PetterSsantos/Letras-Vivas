@@ -1,0 +1,1208 @@
+document.addEventListener("DOMContentLoaded", () => {
+    const {
+        Engine,
+        Render,
+        Runner,
+        World,
+        Bodies,
+        Body,
+        Events,
+        Mouse,
+        MouseConstraint,
+        Vector,
+    } = Matter;
+
+    const canvasContainer = document.getElementById("canvas-container");
+    const ui = {
+        startChallengeBtn: document.getElementById("start-challenge-btn"),
+        clearBtn: document.getElementById("clear-button"),
+        explosionBtn: document.getElementById("explosion-button"),
+        challengeOverlay: document.getElementById("challenge-overlay"),
+        challengeText: document.getElementById("challenge-text"),
+        themeButtons: document.querySelectorAll(".theme-button"),
+        statsPanel: document.getElementById("stats-panel"),
+        comboDisplay: document.getElementById("combo-display"),
+        score: document.getElementById("score"),
+        wordsCount: document.getElementById("words-count"),
+        accuracy: document.getElementById("accuracy"),
+        combo: document.getElementById("combo"),
+        wpm: document.getElementById("wpm"),
+    };
+
+    let state = {
+        challengeActive: false,
+        letterObjects: [],
+        colorPalette: [],
+        currentTheme: "default",
+        wordQueue: [],
+        score: 0,
+        totalWords: 0,
+        correctChars: 0,
+        totalChars: 0,
+        combo: 0,
+        maxCombo: 0,
+        startTime: null,
+        particles: [],
+    };
+
+    const themes = {
+        default: {
+            name: "Padrão",
+            gravity: 0.2,
+            background: "#0d0d1a",
+            palette: ["#9b59b6", "#3498db", "#f1c40f", "#e67e22"],
+            effects: ["mixed"], // Mistura todos os efeitos
+        },
+        space: {
+            name: "Espaço",
+            gravity: 0.02,
+            background: "#000010",
+            palette: ["#ffffff", "#00aaff", "#ff00ff", "#ffff00"],
+            effects: ["floating", "orbital", "starlike"], // Efeitos espaciais
+        },
+        neon: {
+            name: "Neon",
+            gravity: 0.15,
+            background: "#0a0a0a",
+            palette: ["#39ff14", "#ff14bd", "#14aaff", "#ff9a14"],
+            effects: ["neon_blink", "neon_glow", "electric"], // Efeitos neon
+        },
+        underwater: {
+            name: "Aquático",
+            gravity: 0.08,
+            background: "#002244",
+            palette: ["#00bfff", "#7fffd4", "#f0ffff", "#add8e6"],
+            effects: ["floating_bubble", "sinking", "wave_motion"], // Efeitos aquáticos
+        },
+        fire: {
+            name: "Fogo",
+            gravity: 0.25,
+            background: "#1a0a00",
+            palette: ["#ff4500", "#ff6347", "#ffd700", "#ff8c00"],
+            effects: ["burning", "explosive", "ember"], // Efeitos de fogo
+        },
+    };
+
+    let challenge = { phrase: "", typedIndex: 0 };
+
+    const engine = Engine.create();
+    const world = engine.world;
+    const render = Render.create({
+        element: canvasContainer,
+        engine: engine,
+        options: {
+            width: window.innerWidth,
+            height: window.innerHeight,
+            wireframes: false,
+            background: "transparent",
+            showVelocity: false,
+            showAngleIndicator: false,
+        },
+    });
+    Render.run(render);
+    const runner = Runner.create();
+    Runner.run(runner, engine);
+
+    let boundaries = {};
+    function createBoundaries() {
+        const options = { isStatic: true, render: { visible: false } };
+        const thickness = 50;
+
+        boundaries.ground = Bodies.rectangle(
+            window.innerWidth / 2,
+            window.innerHeight + thickness / 2,
+            window.innerWidth + thickness,
+            thickness,
+            options
+        );
+        boundaries.ceiling = Bodies.rectangle(
+            window.innerWidth / 2,
+            -thickness / 2,
+            window.innerWidth + thickness,
+            thickness,
+            options
+        );
+        boundaries.leftWall = Bodies.rectangle(
+            -thickness / 2,
+            window.innerHeight / 2,
+            thickness,
+            window.innerHeight + thickness,
+            options
+        );
+        boundaries.rightWall = Bodies.rectangle(
+            window.innerWidth + thickness / 2,
+            window.innerHeight / 2,
+            thickness,
+            window.innerHeight + thickness,
+            options
+        );
+
+        World.add(world, Object.values(boundaries));
+    }
+    createBoundaries();
+
+    const mouse = Mouse.create(render.canvas);
+    const mouseConstraint = MouseConstraint.create(engine, {
+        mouse: mouse,
+        constraint: { stiffness: 0.2, render: { visible: false } },
+    });
+    World.add(world, mouseConstraint);
+
+    function getRandomColor() {
+        return state.colorPalette[
+            Math.floor(Math.random() * state.colorPalette.length)
+        ];
+    }
+
+    function createLetter(char, options = {}) {
+        const size = options.size || 25 + Math.random() * 30;
+        const x = options.x || 50 + Math.random() * (window.innerWidth - 100);
+        const y = options.y || -50;
+
+        const bodyOptions = {
+            restitution: 0.3 + Math.random() * 0.5,
+            friction: 0.005 + Math.random() * 0.015,
+            density: 0.008 + Math.random() * 0.012,
+            angle: Math.random() * Math.PI * 2,
+            frictionAir: 0.001,
+        };
+
+        let letterBody;
+        const shapeType = Math.floor(Math.random() * 5);
+
+        switch (shapeType) {
+            case 0:
+                letterBody = Bodies.rectangle(
+                    x,
+                    y,
+                    size * 0.8,
+                    size,
+                    bodyOptions
+                );
+                break;
+            case 1:
+                letterBody = Bodies.circle(x, y, size / 2, bodyOptions);
+                break;
+            case 2:
+                letterBody = Bodies.polygon(x, y, 3, size / 2, bodyOptions);
+                break;
+            case 3:
+                letterBody = Bodies.polygon(x, y, 6, size / 2.5, bodyOptions);
+                break;
+            case 4:
+                letterBody = Bodies.polygon(x, y, 5, size / 2.2, bodyOptions);
+                break;
+        }
+
+        if (!letterBody) {
+            console.error("Falha ao criar corpo da letra");
+            return null;
+        }
+
+        const letterData = {
+            body: letterBody,
+            char: char,
+            initialSize: size,
+            currentSize: size,
+            color: getRandomColor(),
+            specialEffect: getThemeEffect(),
+            life: 1.0,
+            effectCounter: Math.random() * Math.PI * 2, // Começar em pontos diferentes
+            glowIntensity: Math.random() * 0.5 + 0.5,
+            rotation: 0,
+            birthTime: Date.now(),
+            blinkState: Math.random() > 0.5,
+            orbitalCenter: { x: x, y: y },
+            orbitalRadius: 50 + Math.random() * 100,
+            orbitalSpeed: 0.02 + Math.random() * 0.03,
+            waveOffset: Math.random() * Math.PI * 2,
+        };
+
+        applyEffectProperties(letterData);
+
+        // Impulso inicial variado
+        const forceX = (Math.random() - 0.5) * 0.02;
+        const forceY = (Math.random() - 0.5) * 0.01;
+        Body.applyForce(letterBody, letterBody.position, {
+            x: forceX,
+            y: forceY,
+        });
+        Body.setAngularVelocity(letterBody, (Math.random() - 0.5) * 0.3);
+
+        state.letterObjects.push(letterData);
+        World.add(world, letterBody);
+
+        return letterData;
+    }
+
+    function getThemeEffect() {
+        const currentThemeData = themes[state.currentTheme];
+        const effects = currentThemeData.effects;
+
+        if (state.currentTheme === "default") {
+            // Padrão mistura efeitos de todos os temas
+            const allEffects = [
+                "floating",
+                "orbital",
+                "starlike",
+                "neon_blink",
+                "neon_glow",
+                "electric",
+                "floating_bubble",
+                "sinking",
+                "wave_motion",
+                "burning",
+                "explosive",
+                "ember",
+                "pulsating",
+                "jumper",
+                "rainbow",
+            ];
+            return allEffects[Math.floor(Math.random() * allEffects.length)];
+        }
+
+        return effects[Math.floor(Math.random() * effects.length)];
+    }
+
+    function applyEffectProperties(letterData) {
+        const effect = letterData.specialEffect;
+
+        switch (effect) {
+            // EFEITOS ESPACIAIS
+            case "floating":
+                Body.setDensity(letterData.body, 0.001);
+                letterData.color = "#ffffff";
+                break;
+            case "orbital":
+                letterData.color = "#00aaff";
+                break;
+            case "starlike":
+                letterData.color = "#ffff00";
+                letterData.glowIntensity = 2;
+                break;
+
+            // EFEITOS NEON
+            case "neon_blink":
+                letterData.color = "#39ff14";
+                break;
+            case "neon_glow":
+                letterData.color = "#ff14bd";
+                letterData.glowIntensity = 3;
+                break;
+            case "electric":
+                letterData.color = "#14aaff";
+                break;
+
+            // EFEITOS AQUÁTICOS
+            case "floating_bubble":
+                Body.setDensity(letterData.body, 0.003);
+                letterData.color = "#7fffd4";
+                break;
+            case "sinking":
+                Body.setDensity(letterData.body, 0.05);
+                letterData.color = "#add8e6";
+                break;
+            case "wave_motion":
+                letterData.color = "#00bfff";
+                break;
+
+            // EFEITOS DE FOGO
+            case "burning":
+                letterData.color = "#ff4500";
+                letterData.life = 0.8; // Queima mais rápido
+                break;
+            case "explosive":
+                letterData.color = "#ff6347";
+                Body.setDensity(letterData.body, 0.02);
+                break;
+            case "ember":
+                letterData.color = "#ff8c00";
+                letterData.currentSize *= 0.7;
+                break;
+        }
+    }
+
+    function createParticle(x, y, color = "#ffffff") {
+        const particle = document.createElement("div");
+        particle.className = "particle";
+        particle.style.cssText = `
+                        left: ${x}px;
+                        top: ${y}px;
+                        width: ${4 + Math.random() * 6}px;
+                        height: ${4 + Math.random() * 6}px;
+                        background: ${color};
+                        border-radius: 50%;
+                        animation: particleFloat 1s ease-out forwards;
+                    `;
+        document.body.appendChild(particle);
+
+        setTimeout(() => {
+            if (particle.parentNode) {
+                particle.parentNode.removeChild(particle);
+            }
+        }, 1000);
+    }
+
+    function showCombo(combo) {
+        if (combo <= 1) return;
+
+        ui.comboDisplay.textContent = `COMBO x${combo}!`;
+        ui.comboDisplay.style.display = "block";
+
+        // Criar partículas de combo
+        for (let i = 0; i < combo * 2; i++) {
+            setTimeout(() => {
+                createParticle(
+                    window.innerWidth / 2 + (Math.random() - 0.5) * 200,
+                    window.innerHeight / 2 + (Math.random() - 0.5) * 100,
+                    state.colorPalette[
+                        Math.floor(Math.random() * state.colorPalette.length)
+                    ]
+                );
+            }, i * 50);
+        }
+
+        setTimeout(() => {
+            ui.comboDisplay.style.display = "none";
+        }, 1000);
+    }
+
+    function updateStats() {
+        ui.score.textContent = state.score;
+        ui.wordsCount.textContent = state.totalWords;
+        ui.combo.textContent = state.combo;
+
+        const accuracy =
+            state.totalChars > 0
+                ? Math.round((state.correctChars / state.totalChars) * 100)
+                : 100;
+        ui.accuracy.textContent = `${accuracy}%`;
+
+        if (state.startTime) {
+            const timeElapsed = (Date.now() - state.startTime) / 1000 / 60; // minutos
+            const wpm = Math.round(state.correctChars / 5 / timeElapsed) || 0;
+            ui.wpm.textContent = `${wpm} WPM`;
+        }
+    }
+
+    Events.on(engine, "beforeUpdate", () => {
+        for (let i = state.letterObjects.length - 1; i >= 0; i--) {
+            const obj = state.letterObjects[i];
+            if (!obj || !obj.body) {
+                state.letterObjects.splice(i, 1);
+                continue;
+            }
+
+            obj.effectCounter += 0.1;
+            const timeSinceBirth = Date.now() - obj.birthTime;
+
+            switch (obj.specialEffect) {
+                // EFEITOS ESPACIAIS
+                case "floating":
+                    // Flutuação suave no espaço
+                    Body.applyForce(obj.body, obj.body.position, {
+                        x: Math.sin(obj.effectCounter) * 0.0005,
+                        y:
+                            -engine.world.gravity.y * obj.body.mass * 1.5 +
+                            Math.cos(obj.effectCounter * 0.7) * 0.0003,
+                    });
+                    break;
+
+                case "orbital":
+                    // Movimento orbital ao redor do centro
+                    const centerX = obj.orbitalCenter.x;
+                    const centerY = obj.orbitalCenter.y;
+                    const targetX =
+                        centerX +
+                        Math.cos(obj.effectCounter * obj.orbitalSpeed) *
+                            obj.orbitalRadius;
+                    const targetY =
+                        centerY +
+                        Math.sin(obj.effectCounter * obj.orbitalSpeed) *
+                            obj.orbitalRadius *
+                            0.6;
+
+                    const forceToCenter = Vector.mult(
+                        Vector.normalise(
+                            Vector.sub(
+                                { x: targetX, y: targetY },
+                                obj.body.position
+                            )
+                        ),
+                        0.001
+                    );
+                    Body.applyForce(obj.body, obj.body.position, forceToCenter);
+                    break;
+
+                case "starlike":
+                    // Piscar como estrela
+                    obj.glowIntensity =
+                        1 + Math.sin(obj.effectCounter * 3) * 0.5;
+                    obj.currentSize =
+                        obj.initialSize *
+                        (1 + Math.sin(obj.effectCounter * 2) * 0.1);
+                    break;
+
+                // EFEITOS NEON
+                case "neon_blink":
+                    // Piscar neon
+                    obj.blinkState = Math.sin(obj.effectCounter * 4) > 0;
+                    obj.life = obj.blinkState ? 1 : 0.1;
+                    break;
+
+                case "neon_glow":
+                    // Brilho neon pulsante
+                    obj.glowIntensity = 2 + Math.sin(obj.effectCounter * 2) * 1;
+                    break;
+
+                case "electric":
+                    // Descargas elétricas
+                    if (Math.random() < 0.05) {
+                        Body.applyForce(obj.body, obj.body.position, {
+                            x: (Math.random() - 0.5) * 0.01,
+                            y: (Math.random() - 0.5) * 0.01,
+                        });
+                    }
+                    obj.glowIntensity = Math.random() * 2 + 1;
+                    break;
+
+                // EFEITOS AQUÁTICOS
+                case "floating_bubble":
+                    // Subir como bolha
+                    if (obj.body.position.y > window.innerHeight * 0.2) {
+                        Body.applyForce(obj.body, obj.body.position, {
+                            x: Math.sin(obj.effectCounter * 0.5) * 0.0003,
+                            y: -0.003,
+                        });
+                    }
+                    obj.currentSize =
+                        obj.initialSize *
+                        (1 + Math.sin(obj.effectCounter) * 0.1);
+                    break;
+
+                case "sinking":
+                    // Afundar mais rápido
+                    Body.applyForce(obj.body, obj.body.position, {
+                        x: 0,
+                        y: 0.002,
+                    });
+                    break;
+
+                case "wave_motion":
+                    // Movimento ondulatório
+                    Body.applyForce(obj.body, obj.body.position, {
+                        x:
+                            Math.sin(obj.effectCounter + obj.waveOffset) *
+                            0.0008,
+                        y:
+                            Math.cos(obj.effectCounter * 0.7 + obj.waveOffset) *
+                            0.0004,
+                    });
+                    break;
+
+                // EFEITOS DE FOGO
+                case "burning":
+                    // Consumir com o tempo e criar partículas
+                    obj.life -= 0.005;
+                    obj.currentSize = obj.initialSize * obj.life;
+
+                    // Criar partículas de fogo
+                    if (
+                        Math.random() < 0.1 &&
+                        obj.body.position.y < window.innerHeight
+                    ) {
+                        createParticle(
+                            obj.body.position.x + (Math.random() - 0.5) * 20,
+                            obj.body.position.y - 10,
+                            "#ff6347"
+                        );
+                    }
+
+                    // Força para cima (como fogo)
+                    Body.applyForce(obj.body, obj.body.position, {
+                        x: (Math.random() - 0.5) * 0.001,
+                        y: -0.002,
+                    });
+                    break;
+
+                case "explosive":
+                    // Explode após um tempo
+                    if (timeSinceBirth > 3000 && Math.random() < 0.01) {
+                        // Criar mini explosão
+                        for (let j = 0; j < 8; j++) {
+                            const angle = (j / 8) * Math.PI * 2;
+                            createParticle(
+                                obj.body.position.x + Math.cos(angle) * 30,
+                                obj.body.position.y + Math.sin(angle) * 30,
+                                "#ff4500"
+                            );
+                        }
+                        obj.life = 0; // Marcar para remoção
+                    }
+                    break;
+
+                case "ember":
+                    // Como brasa que diminui
+                    obj.life -= 0.002;
+                    obj.currentSize = obj.initialSize * (0.5 + obj.life * 0.5);
+                    obj.glowIntensity = obj.life * 2;
+
+                    // Flutuar como brasa
+                    Body.applyForce(obj.body, obj.body.position, {
+                        x: Math.sin(obj.effectCounter) * 0.0002,
+                        y: -0.001,
+                    });
+                    break;
+
+                // EFEITOS CLÁSSICOS (para o modo padrão)
+                case "pulsating":
+                    obj.currentSize =
+                        obj.initialSize *
+                        (1 + Math.sin(obj.effectCounter) * 0.3);
+                    obj.glowIntensity = 0.5 + Math.sin(obj.effectCounter) * 0.5;
+                    break;
+
+                case "jumper":
+                    if (Math.random() < 0.008) {
+                        Body.applyForce(obj.body, obj.body.position, {
+                            x: (Math.random() - 0.5) * 0.02,
+                            y: -0.03,
+                        });
+                    }
+                    break;
+
+                case "rainbow":
+                    // Cor será tratada no render
+                    break;
+            }
+
+            // Remover objetos que saíram da tela ou morreram
+            if (
+                obj.life <= 0 ||
+                obj.body.position.y > window.innerHeight + 200 ||
+                obj.body.position.x < -200 ||
+                obj.body.position.x > window.innerWidth + 200
+            ) {
+                World.remove(world, obj.body);
+                state.letterObjects.splice(i, 1);
+            }
+        }
+    });
+
+    Events.on(render, "afterRender", () => {
+        const ctx = render.context;
+        ctx.save();
+
+        state.letterObjects.forEach((obj, index) => {
+            const {
+                body,
+                char,
+                currentSize,
+                color,
+                life,
+                glowIntensity,
+                specialEffect,
+            } = obj;
+            if (!body || !body.position) return;
+
+            const { position, angle } = body;
+
+            ctx.globalAlpha = Math.max(0, Math.min(1, life));
+            ctx.translate(position.x, position.y);
+            ctx.rotate(angle);
+
+            // Aplicar efeitos visuais baseados no tipo
+            let finalColor = color;
+            let glowColor = color;
+            let shadowBlur = 0;
+
+            switch (specialEffect) {
+                case "rainbow":
+                    const hue = (Date.now() * 0.1 + position.x * 0.1) % 360;
+                    finalColor = `hsl(${hue}, 80%, 60%)`;
+                    break;
+
+                case "starlike":
+                    shadowBlur = 20 * glowIntensity;
+                    glowColor = "#ffff00";
+                    break;
+
+                case "neon_blink":
+                    if (!obj.blinkState) {
+                        ctx.globalAlpha *= 0.1;
+                    } else {
+                        shadowBlur = 15;
+                        glowColor = "#39ff14";
+                    }
+                    break;
+
+                case "neon_glow":
+                    shadowBlur = 20 * glowIntensity;
+                    glowColor = "#ff14bd";
+                    break;
+
+                case "electric":
+                    shadowBlur = 15 * glowIntensity;
+                    glowColor = "#14aaff";
+                    // Efeito de raio ocasional
+                    if (Math.random() < 0.1) {
+                        ctx.strokeStyle = "#ffffff";
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(-10, 0);
+                        ctx.lineTo(10, 0);
+                        ctx.stroke();
+                    }
+                    break;
+
+                case "floating_bubble":
+                    // Efeito bolha
+                    ctx.globalAlpha *= 0.8;
+                    shadowBlur = 10;
+                    glowColor = "#7fffd4";
+                    break;
+
+                case "burning":
+                    // Efeito fogo
+                    const fireHue = 15 + Math.random() * 30; // Variação entre vermelho e amarelo
+                    finalColor = `hsl(${fireHue}, 100%, ${
+                        50 + Math.random() * 30
+                    }%)`;
+                    shadowBlur = 15 * (1 + Math.random());
+                    glowColor = finalColor;
+                    break;
+
+                case "ember":
+                    shadowBlur = 10 * glowIntensity;
+                    glowColor = "#ff8c00";
+                    break;
+
+                case "pulsating":
+                    shadowBlur = 15 * glowIntensity;
+                    glowColor = color;
+                    break;
+            }
+
+            // Aplicar glow se necessário
+            if (shadowBlur > 0) {
+                ctx.shadowColor = glowColor;
+                ctx.shadowBlur = shadowBlur;
+            }
+
+            ctx.fillStyle = finalColor;
+            ctx.font = `bold ${Math.max(
+                8,
+                currentSize
+            )}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+
+            // Garantir que o caractere seja válido
+            const charToDraw = char || "?";
+            ctx.fillText(charToDraw, 0, 0);
+
+            // Resetar transformações
+            ctx.shadowBlur = 0;
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.globalAlpha = 1.0;
+        });
+
+        ctx.restore();
+    });
+
+    function clearScreen() {
+        // Remover todos os corpos das letras
+        state.letterObjects.forEach((obj) => {
+            if (obj.body) {
+                World.remove(world, obj.body);
+            }
+        });
+        state.letterObjects = [];
+
+        // Recriar boundaries
+        World.remove(world, Object.values(boundaries));
+        createBoundaries();
+        World.add(world, mouseConstraint);
+    }
+
+    function clearScreen() {
+        // Remover todos os corpos das letras
+        state.letterObjects.forEach((obj) => {
+            if (obj.body) {
+                World.remove(world, obj.body);
+            }
+        });
+        state.letterObjects = [];
+
+        // Recriar boundaries
+        World.remove(world, Object.values(boundaries));
+        createBoundaries();
+        World.add(world, mouseConstraint);
+    }
+
+    function createExplosion() {
+        const centerX = window.innerWidth / 2;
+        const centerY = window.innerHeight / 2;
+        const chars = "★☆✦✧⟡◆◇▲△▼▽";
+
+        // Criar múltiplas ondas de explosão
+        for (let wave = 0; wave < 3; wave++) {
+            setTimeout(() => {
+                for (let i = 0; i < 24; i++) {
+                    const angle = (i / 24) * Math.PI * 2;
+                    const distance = 50 + wave * 80;
+                    const x = centerX + Math.cos(angle) * distance;
+                    const y = centerY + Math.sin(angle) * distance;
+
+                    const char =
+                        chars[Math.floor(Math.random() * chars.length)];
+                    const letter = createLetter(char, {
+                        x: centerX,
+                        y: centerY,
+                        size: 20 + Math.random() * 30,
+                    });
+
+                    // Aplicar força explosiva
+                    setTimeout(() => {
+                        if (letter && letter.body) {
+                            const force = 0.05 + wave * 0.02;
+                            Body.applyForce(letter.body, letter.body.position, {
+                                x: Math.cos(angle) * force,
+                                y: Math.sin(angle) * force,
+                            });
+                        }
+                    }, 50);
+
+                    // Partículas visuais
+                    createParticle(
+                        x,
+                        y,
+                        state.colorPalette[
+                            Math.floor(
+                                Math.random() * state.colorPalette.length
+                            )
+                        ]
+                    );
+                }
+            }, wave * 200);
+        }
+    }
+
+    function applyTheme(themeName) {
+        const theme = themes[themeName];
+        if (!theme) return;
+
+        state.currentTheme = themeName;
+        engine.world.gravity.y = theme.gravity;
+        document.body.style.background = theme.background;
+        state.colorPalette = [...theme.palette];
+
+        ui.themeButtons.forEach((btn) =>
+            btn.classList.toggle("active", btn.dataset.theme === themeName)
+        );
+
+        // Aplicar efeitos do tema às letras existentes
+        state.letterObjects.forEach((obj) => {
+            obj.specialEffect = getThemeEffect();
+            applyEffectProperties(obj);
+        });
+    }
+    const wordLists = {
+        portuguese: [
+            "amor",
+            "casa",
+            "vida",
+            "mundo",
+            "tempo",
+            "pessoa",
+            "dia",
+            "mão",
+            "vez",
+            "país",
+            "parte",
+            "momento",
+            "lugar",
+            "forma",
+            "caso",
+            "homem",
+            "mulher",
+            "olho",
+            "trabalho",
+            "governo",
+            "empresa",
+            "questão",
+            "fim",
+            "curso",
+            "estado",
+            "área",
+            "poder",
+            "política",
+            "resultado",
+            "ponto",
+            "projeto",
+            "sistema",
+            "programa",
+            "problema",
+            "serviço",
+            "interesse",
+            "criança",
+            "atenção",
+            "história",
+            "produto",
+            "tecnologia",
+            "computador",
+            "internet",
+            "música",
+            "cinema",
+            "livro",
+            "escola",
+            "universidade",
+            "professor",
+            "aluno",
+            "família",
+            "amigo",
+            "sociedade",
+            "cultura",
+            "natureza",
+            "animal",
+            "planta",
+            "água",
+            "ar",
+            "fogo",
+            "alegria",
+            "tristeza",
+            "esperança",
+            "sonho",
+            "realidade",
+            "futuro",
+            "passado",
+            "presente",
+            "viagem",
+            "aventura",
+        ],
+        english: [
+            "love",
+            "house",
+            "life",
+            "world",
+            "time",
+            "person",
+            "day",
+            "hand",
+            "way",
+            "country",
+            "part",
+            "moment",
+            "place",
+            "form",
+            "case",
+            "man",
+            "woman",
+            "eye",
+            "work",
+            "government",
+            "company",
+            "question",
+            "end",
+            "course",
+            "state",
+            "area",
+            "power",
+            "politics",
+            "result",
+            "point",
+            "project",
+            "system",
+            "program",
+            "problem",
+            "service",
+            "interest",
+            "child",
+            "attention",
+            "history",
+            "product",
+            "technology",
+            "computer",
+            "internet",
+            "music",
+            "cinema",
+            "book",
+            "school",
+            "university",
+            "teacher",
+            "student",
+            "family",
+            "friend",
+            "society",
+            "culture",
+            "nature",
+            "animal",
+            "plant",
+            "water",
+            "air",
+            "fire",
+            "happiness",
+            "sadness",
+            "hope",
+            "dream",
+            "reality",
+            "future",
+            "past",
+            "present",
+            "travel",
+            "adventure",
+        ],
+    };
+
+    async function fetchWords() {
+        // Primeiro tentar API externa
+        try {
+            const response = await fetch(
+                "https://random-words-api.kushcreates.com/api?language=pt-r&words=10&case=capital"
+            );
+            if (response.ok) {
+                const words = await response.json();
+                state.wordQueue.push(...words);
+                return;
+            }
+        } catch (error) {
+            console.log("API externa indisponível, usando palavras locais");
+        }
+
+        // Fallback para palavras locais
+        const currentLanguage = navigator.language.startsWith("pt")
+            ? "portuguese"
+            : "english";
+        const words = wordLists[currentLanguage];
+        const shuffled = [...words].sort(() => Math.random() - 0.5);
+        state.wordQueue.push(...shuffled.slice(0, 15));
+    }
+
+    function nextChallengeWord() {
+        clearScreen();
+
+        if (state.wordQueue.length < 3) {
+            fetchWords();
+        }
+
+        if (state.wordQueue.length === 0) {
+            ui.challengeText.innerHTML =
+                '<span class="rainbow-text">Carregando palavras...</span>';
+            setTimeout(nextChallengeWord, 1000);
+            return;
+        }
+
+        challenge.phrase = state.wordQueue.shift();
+        challenge.typedIndex = 0;
+        updateChallengeText();
+    }
+
+    function startChallenge() {
+        state.challengeActive = true;
+        state.startTime = Date.now();
+        state.score = 0;
+        state.totalWords = 0;
+        state.correctChars = 0;
+        state.totalChars = 0;
+        state.combo = 0;
+
+        ui.startChallengeBtn.textContent = "⏹️ Parar";
+        ui.startChallengeBtn.classList.add("stop");
+        ui.challengeOverlay.classList.add("visible");
+        ui.statsPanel.classList.add("visible");
+
+        updateStats();
+        nextChallengeWord();
+    }
+
+    function stopChallenge() {
+        state.challengeActive = false;
+
+        // // Parar chuva se estiver ativa
+        // if (state.rainActive) {
+        //     console.log("Parando chuva durante stopChallenge");
+        //     if (state.rainInterval) {
+        //         clearInterval(state.rainInterval);
+        //         state.rainInterval = null;
+        //     }
+        //     if (state.rainTimeoutId) {
+        //         clearTimeout(state.rainTimeoutId);
+        //         state.rainTimeoutId = null;
+        //     }
+        //     state.rainActive = false;
+        //     ui.rainBtn.textContent = "🌧️ Chuva";
+        //     ui.rainBtn.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+        // }
+
+        ui.startChallengeBtn.textContent = "🏆 Maratona";
+        ui.startChallengeBtn.classList.remove("stop");
+        ui.challengeOverlay.classList.remove("visible");
+        ui.statsPanel.classList.remove("visible");
+
+        clearScreen();
+
+        // Mostrar resultado final se jogou
+        if (state.totalWords > 0) {
+            setTimeout(() => {
+                const accuracy = Math.round(
+                    (state.correctChars / state.totalChars) * 100
+                );
+                const finalMessage = `🎯 Resultado Final:\n📊 ${state.totalWords} palavras\n🎯 ${accuracy}% precisão\n⚡ ${state.maxCombo} combo máximo\n🏆 ${state.score} pontos`;
+                alert(finalMessage);
+            }, 500);
+        }
+    }
+
+    function updateChallengeText() {
+        const typed = challenge.phrase.substring(0, challenge.typedIndex);
+        const remaining = challenge.phrase.substring(challenge.typedIndex);
+        ui.challengeText.innerHTML = `<span class="typed-char">${typed}</span>${remaining}`;
+    }
+
+    function handleChallengeInput(char) {
+        state.totalChars++;
+
+        const expectedChar = challenge.phrase[challenge.typedIndex];
+        if (char.toLowerCase() === expectedChar?.toLowerCase()) {
+            // Acerto
+            state.correctChars++;
+            challenge.typedIndex++;
+            state.combo++;
+
+            // Bonificação por combo
+            let comboMultiplier = Math.min(5, Math.floor(state.combo / 5) + 1);
+            state.score += 10 * comboMultiplier;
+
+            updateChallengeText();
+            updateStats();
+
+            // Mostrar combo
+            if (state.combo > 1 && state.combo % 5 === 0) {
+                showCombo(state.combo);
+            }
+
+            // Palavra completa
+            if (challenge.typedIndex === challenge.phrase.length) {
+                state.totalWords++;
+                state.maxCombo = Math.max(state.maxCombo, state.combo);
+
+                // Bonus por palavra completa
+                const wordBonus = challenge.phrase.length * 5 * comboMultiplier;
+                state.score += wordBonus;
+
+                // Criar letras da palavra com efeito especial
+                for (let i = 0; i < challenge.phrase.length; i++) {
+                    setTimeout(() => {
+                        const letter = createLetter(challenge.phrase[i], {
+                            x:
+                                window.innerWidth / 2 +
+                                (i - challenge.phrase.length / 2) * 40,
+                            y: window.innerHeight * 0.3,
+                            size: 30 + Math.random() * 20,
+                        });
+                        letter.specialEffect = "pulsating";
+                        letter.color = state.colorPalette[0];
+                    }, i * 100);
+                }
+
+                setTimeout(
+                    nextChallengeWord,
+                    Math.max(1500, challenge.phrase.length * 150)
+                );
+            }
+        } else {
+            // Erro
+            state.combo = 0;
+            // Pequena penalidade
+            state.score = Math.max(0, state.score - 5);
+
+            // Feedback visual de erro
+            ui.challengeText.style.filter =
+                "brightness(0.5) sepia(1) hue-rotate(0deg) saturate(2)";
+            setTimeout(() => {
+                ui.challengeText.style.filter = "";
+            }, 200);
+        }
+
+        updateStats();
+    }
+
+    // Event Listeners
+    window.addEventListener("keydown", (e) => {
+        // Prevenir comportamento padrão para teclas especiais
+        if (["F5", "F12", "Tab"].includes(e.key)) return;
+        e.preventDefault();
+
+        if (e.key.length === 1) {
+            if (state.challengeActive) {
+                handleChallengeInput(e.key);
+            } else {
+                createLetter(e.key, {
+                    x: mouse.position.x || window.innerWidth / 2,
+                    y: mouse.position.y || window.innerHeight / 2,
+                });
+            }
+        }
+    });
+
+    // Controles dos botões
+    ui.clearBtn.addEventListener("click", () => {
+        if (state.challengeActive) {
+            stopChallenge();
+        } else {
+            clearScreen();
+        }
+    });
+
+    ui.startChallengeBtn.addEventListener("click", () => {
+        state.challengeActive ? stopChallenge() : startChallenge();
+    });
+
+    ui.explosionBtn.addEventListener("click", createExplosion);
+
+    ui.themeButtons.forEach((btn) => {
+        btn.addEventListener("click", () => applyTheme(btn.dataset.theme));
+    });
+
+    // Event listener para fechar instruções
+    document
+        .querySelector(".close-instructions")
+        .addEventListener("click", () => {
+            document.getElementById("instructions").classList.add("hidden");
+        });
+
+    // Responsividade
+    window.addEventListener("resize", () => {
+        // Atualizar tamanho do canvas
+        render.canvas.width = window.innerWidth;
+        render.canvas.height = window.innerHeight;
+        render.options.width = window.innerWidth;
+        render.options.height = window.innerHeight;
+
+        // Recriar boundaries
+        World.remove(world, Object.values(boundaries));
+        createBoundaries();
+    });
+
+    // Inicialização
+    applyTheme("default");
+    fetchWords();
+
+    // Mensagem de boas-vindas
+    setTimeout(() => {
+        if (!state.challengeActive) {
+            const welcomeChars = "WELCOME!";
+            for (let i = 0; i < welcomeChars.length; i++) {
+                setTimeout(() => {
+                    createLetter(welcomeChars[i], {
+                        x:
+                            window.innerWidth / 2 +
+                            (i - welcomeChars.length / 2) * 80,
+                        y: window.innerHeight * 0.2,
+                        size: 40,
+                    });
+                }, i * 500);
+            }
+        }
+    }, 1000);
+});
