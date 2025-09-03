@@ -1062,15 +1062,15 @@
                 // Mensagem de boas-vindas
                 setTimeout(() => {
                     if (!state.challengeActive) {
-                        const welcomeChars = "BEM-VINDOS!";
+                        const welcomeChars = "WELCOME!";
                         for (let i = 0; i < welcomeChars.length; i++) {
                             setTimeout(() => {
                                 createLetter(welcomeChars[i], {
-                                    x: window.innerWidth/2 + (i - welcomeChars.length/2) * 50,
+                                    x: window.innerWidth/2 + (i - welcomeChars.length/2) * 80,
                                     y: window.innerHeight * 0.2,
                                     size: 40
                                 });
-                            }, i * 200);
+                            }, i * 500);
                         }
                     }
                 }, 1000);
