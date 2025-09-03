@@ -42,6 +42,13 @@ Type letters to bring them to life with dynamic physics, glowing effects, and th
 
 ---
 
+## 📸 Game photos
+![alt text](../Letras%20Vivas/public/assets/img/image.png)
+---
+![alt text](../Letras%20Vivas/public/assets/img/another_image.png)
+
+---
+
 ## 📦 Installation
 
 1. Clone this repository:
